@@ -1,0 +1,24 @@
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# ML artifacts and data
+*.h5
+*.pkl
+*.joblib
+*.pt
+*.onnx
+data/
+models/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
