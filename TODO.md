@@ -14,6 +14,12 @@ _Updated 2026-09-13_
       (untracked so far).
 
 ## Done (2026-09-17) — the real dataset
+- [x] **EDA 02** `notebooks/02-eda-daily-counts.ipynb` — one chapter per sit threshold; line plot of
+      mean visits per bat-day ± 95 % CI for lactating / not lactating / unlabelled. Key read:
+      **lactating bats are the most active** at every threshold (peak mean 9.41 vs 6.46 vs 2.89 at
+      sit10s → 4.84 vs 2.47 vs 1.44 at sit600s), and the gap widens as the threshold gets finer —
+      i.e. lactation shows up as *more separate visits*, which is the Fontaine mechanism.
+      Logger window ≈ Apr 20 – Sep 26 (160/365 days with any detection).
 - [x] **Wide daily activity matrix built** — `src/build_daily_counts.py` →
       `data/processed/daily_counts/daily_counts_sit{10,30,60,120,300,600}s.csv`
       (2,070 rows each: one bat-year; `Year, Bat Id, Colonie, Day1..Day365, Lactating`).
