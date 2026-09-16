@@ -15,10 +15,13 @@ _Updated 2026-09-13_
 
 ## Done (2026-09-17) — the real dataset
 - [x] **EDA 02** `notebooks/02-eda-daily-counts.ipynb` — one chapter per sit threshold; line plot of
-      mean visits per bat-day ± 95 % CI for lactating / not lactating / unlabelled. Key read:
-      **lactating bats are the most active** at every threshold (peak mean 9.41 vs 6.46 vs 2.89 at
-      sit10s → 4.84 vs 2.47 vs 1.44 at sit600s), and the gap widens as the threshold gets finer —
-      i.e. lactation shows up as *more separate visits*, which is the Fontaine mechanism.
+      mean visits per bat-day ± 95 % CI for lactating / not lactating / unlabelled.
+      **Lactating bats are the most active at every threshold** (Jul 5: 7.00 vs 2.40 at sit10s →
+      4.02 vs 1.74 at sit600s), and the *ratio* is sit-robust (~2.3–2.9 everywhere).
+      What is **not** robust is the separation: two-sample z on Jul 5 falls 4.7 (10s) → 10.2 (300s),
+      because the extra events a fine threshold buys are ~equally spread over groups
+      (chatter inflation at 10s = ×1.68 lactating / ×1.59 not lactating) — i.e. pure variance,
+      no signal. ⇒ **prefer sit 300–600s**; sit10s is close to unusable as a visit count.
       Logger window ≈ Apr 20 – Sep 26 (160/365 days with any detection).
 - [x] **Wide daily activity matrix built** — `src/build_daily_counts.py` →
       `data/processed/daily_counts/daily_counts_sit{10,30,60,120,300,600}s.csv`
@@ -38,8 +41,8 @@ _Updated 2026-09-13_
 - [ ] Turn `Day1..Day365` into per-bat-year *features* (e.g. n_active_days, mean/max nightly
       count, first/last activity date, mid-night (23–03h) share) and try to reproduce the
       table's own `n_days_Tq` / `Box_*` columns as a sanity join before modelling.
-- [ ] Decide sit threshold (10s vs 600s) as *the* representation — they differ ~1.6× in total
-      events and near-raw 10s counts can be 4,865 in a single bat-year.
+- [ ] Decide sit threshold (10s vs 600s) as *the* representation — EDA 02 says **300–600s**
+      (best group separation, least chatter); 10s adds ~68 % more events that are pure variance.
 
 ## Blocked on the real dataset (expected ~2026-09-15)
 > Nothing below should be decided on the synthetic sandbox — the dummy data is
