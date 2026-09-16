@@ -13,6 +13,28 @@ _Updated 2026-09-13_
 - [x] First pass over the rescued PIT-tag CSVs: `notebooks/01-eda-detections.ipynb`
       (untracked so far).
 
+## Done (2026-09-17) — the real dataset
+- [x] **Wide daily activity matrix built** — `src/build_daily_counts.py` →
+      `data/processed/daily_counts/daily_counts_sit{10,30,60,120,300,600}s.csv`
+      (2,070 rows each: one bat-year; `Year, Bat Id, Colonie, Day1..Day365, Lactating`).
+      Bat-day = 12:00→12:00, Feb 29 dropped so 365 columns always.
+      `Lactating` = `Reproduction State` joined on `ID4` (suffix match, see below).
+- [x] **`ID4` is a partial tag id** ("last 4 digits, longer if not unique") → joins to the
+      10-char activity `id` by **suffix**, not equality (only 3 exact matches).
+      223/233 resolve; 4 are genuine last-4 collisions (`0832`, `9900`, `AA3C`, `F44A`) → left
+      unlabelled. 7-digit activity tags are zero-padded and merged into their 10-char form.
+- [x] **Cross-colony movers exist in the activity data** (68 (year,tag) combos at ≥2 colonies
+      at every sit level; e.g. `8E602D0D0F` 2011 = BS 203 / GB2 394 / UA 42 at sit600s), but
+      the label table assigns each individual **one colony for life** (0 of 233 `ID4`s move).
+
+## Next (post-dataset)
+
+- [ ] Turn `Day1..Day365` into per-bat-year *features* (e.g. n_active_days, mean/max nightly
+      count, first/last activity date, mid-night (23–03h) share) and try to reproduce the
+      table's own `n_days_Tq` / `Box_*` columns as a sanity join before modelling.
+- [ ] Decide sit threshold (10s vs 600s) as *the* representation — they differ ~1.6× in total
+      events and near-raw 10s counts can be 4,865 in a single bat-year.
+
 ## Blocked on the real dataset (expected ~2026-09-15)
 > Nothing below should be decided on the synthetic sandbox — the dummy data is
 > unrealistically kind (identical per-bat baselines, no roost switching).
