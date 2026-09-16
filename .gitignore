@@ -9,14 +9,16 @@ __pycache__/
 # Jupyter notebooks
 .ipynb_checkpoints/
 
-# ML artifacts and data
+# ML artifacts
 *.h5
 *.pkl
 *.joblib
 *.pt
 *.onnx
-data/
 models/
+
+# NOTE: data/ is intentionally NOT ignored — we track the datasets in git
+# (data/raw = PIT-tag pilot CSVs, data/processed = sandbox + derived)
 
 # IDE / OS
 .vscode/
