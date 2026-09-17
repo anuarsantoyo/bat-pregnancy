@@ -56,7 +56,11 @@ _Updated 2026-09-13_
       table's own `n_days_Tq` / `Box_*` columns as a sanity join before modelling.
 - [ ] Decide sit threshold (10s vs 600s) as *the* representation — EDA 02 says **300–600s**
       (best group separation, least chatter); 10s adds ~68 % more events that are pure variance.
-- [x] **Smoothing the means before the sweep — TESTED 2026-09-17, does NOT help.** Boxcar widths
+- [x] **Smoothing the means before the sweep — IMPLEMENTED as `smooth_window`, TESTED 2026-09-17,
+      does NOT help.** Rolling-window average (requested by Anuar) is now a parameter on the
+      classifier, applied to both class-mean series before the sweep, default **1 = off**.
+      LOO scan w ∈ {1,3,5,7,11,15,21}: acc 0.695–0.701, F1 0.757–0.762, AUC 0.699–0.700 — flat, and
+      w=1 (no smoothing) is the best on accuracy. Earlier 5-fold scan with Boxcar widths
       3–31 (prototypes only / series only / both) and Gaussian sigma 1–12 on the prototypes, 5-fold CV
       and confirmed under leave-one-out for the best settings: AUC flat at 0.697–0.702 vs 0.700 baseline,
       accuracy flat-to-slightly-down (0.701 → 0.691 at w=15/31). Reason, quantified: the prototypes'

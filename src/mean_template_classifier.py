@@ -63,6 +63,35 @@ identical to leave-one-row-out, so bat-identity leakage is not a factor.
 Onset output: 374 onsets returned, 39 distinct values spanning day 160-205 (early June to
 late July), so the sweep still localises the jump.
 
+``smooth_window`` (rolling-window average of the class means)
+------------------------------------------------------------
+Optional simple centred rolling average applied to **both class-mean series** before the sweep,
+width in days (even widths bumped to odd so the average stays centred; prototypes zero-padded at
+the year edges, harmless because activity there is ~0). It is linear, so smoothing the training
+series and then averaging is identical to averaging and then smoothing the means.
+
+Measured on the real data, leave-one-out, with the sweep as specified:
+
+=============  ======  ========  =======  ======  ======
+smooth_window  acc     precision recall   F1      AUC
+=============  ======  ========  =======  ======  ======
+1 (none)       0.701   0.845     0.695    0.762   0.700
+3              0.695   0.841     0.688    0.757   0.700
+5              0.696   0.842     0.690    0.758   0.700
+7              0.696   0.842     0.690    0.758   0.700
+11             0.695   0.841     0.688    0.757   0.699
+15             0.698   0.840     0.695    0.761   0.699
+21             0.698   0.839     0.697    0.761   0.699
+=============  ======  ========  =======  ======  ======
+
+No gain: AUC is flat and accuracy is flat to marginally lower. Reason, quantified: the
+prototypes' day-to-day wiggle is 0.155 with a daily SEM of 0.070, while their seasonal swing is
+**5.61** -- the decision runs on that seasonal level, which a low-pass filter cannot change. The
+smearing that does exist comes from onset/duration jitter across bats (a *low*-frequency
+misalignment), so smoothing makes it marginally worse rather than better; the fix for that is
+align-then-average or a parametric template. Smoothing the individual series instead is equally
+flat. Kept as an option, default is off (``1``).
+
 Measured, synthetic sandbox (``data/processed/dummy_data.csv``, 1000 x 180)
 --------------------------------------------------------------------------
 ===============  ======  ========  =======  ======  ======
@@ -105,7 +134,8 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
     Attributes
     ----------
     classes_ : ndarray of shape (2,)
-    mean_0_, mean_1_ : ndarray of shape (n_features,) -- the two class prototypes.
+    mean_0_, mean_1_ : ndarray of shape (n_features,) -- the two class prototypes (the smoothed
+        per-day means of the two labels when ``smooth_window > 1``).
     diff_template_ : ndarray -- ``mean_1_ - mean_0_`` (kept for inspection/plots).
     onset_anchor_ : int -- index inside the prototypes where the elevated phase is taken to
         start (50% of the rise of ``diff_template_``). The onset day of a series is
@@ -113,8 +143,22 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
     n_features_in_ : int
     """
 
-    def __init__(self, min_overlap: float = 0.0) -> None:
+    def __init__(self, min_overlap: float = 0.0, smooth_window: int = 1) -> None:
+        """
+        Parameters
+        ----------
+        min_overlap : float in [0, 1], default 0.0
+            Minimum fraction of the series' data that must overlap the prototype's data for an
+            offset to be admissible: ``|offset| <= (1 - min_overlap) * n``. ``0.0`` is the full
+            sweep, ``1.0`` disables it (full alignment only).
+        smooth_window : int, default 1
+            Window width (days) of a simple centred rolling average applied to **the mean time
+            series of both labels** before the sweep. ``1`` means no smoothing. Even widths are
+            bumped to the next odd number so the average stays centred. The prototypes are
+            zero-padded at the year edges, which is harmless because activity there is ~0.
+        """
         self.min_overlap = min_overlap
+        self.smooth_window = smooth_window
 
     # ------------------------------------------------------------------ fit
     def fit(self, X, y):
@@ -129,11 +173,13 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
             raise ValueError(f"y must be binary 0/1, got classes {uniq}")
         if not 0.0 <= float(self.min_overlap) <= 1.0:
             raise ValueError(f"min_overlap must be in [0, 1], got {self.min_overlap}")
+        if int(self.smooth_window) < 1:
+            raise ValueError(f"smooth_window must be >= 1, got {self.smooth_window}")
 
         self.n_features_in_ = X.shape[1]
         self.classes_ = np.array([0, 1])
-        self.mean_0_ = X[y == 0].mean(axis=0)
-        self.mean_1_ = X[y == 1].mean(axis=0)
+        self.mean_0_ = self._smooth(X[y == 0].mean(axis=0))
+        self.mean_1_ = self._smooth(X[y == 1].mean(axis=0))
         self.diff_template_ = self.mean_1_ - self.mean_0_
 
         # zero-padded prototypes: pad | data | pad
@@ -148,6 +194,16 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
         return self
 
     # ------------------------------------------------------------- helpers
+    def _smooth(self, series):
+        """Simple centred rolling-window average of a time series (the class-mean series)."""
+        w = int(self.smooth_window)
+        if w <= 1:
+            return np.asarray(series, dtype=float)
+        if w % 2 == 0:                      # keep the average centred
+            w += 1
+        kernel = np.ones(w) / w
+        return np.convolve(np.asarray(series, dtype=float), kernel, mode="same")
+
     def _shift_bounds(self):
         """Inclusive range of relative offsets allowed by ``min_overlap``.
 
