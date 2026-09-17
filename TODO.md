@@ -56,6 +56,15 @@ _Updated 2026-09-13_
       table's own `n_days_Tq` / `Box_*` columns as a sanity join before modelling.
 - [ ] Decide sit threshold (10s vs 600s) as *the* representation — EDA 02 says **300–600s**
       (best group separation, least chatter); 10s adds ~68 % more events that are pure variance.
+- [x] **Smoothing the means before the sweep — TESTED 2026-09-17, does NOT help.** Boxcar widths
+      3–31 (prototypes only / series only / both) and Gaussian sigma 1–12 on the prototypes, 5-fold CV
+      and confirmed under leave-one-out for the best settings: AUC flat at 0.697–0.702 vs 0.700 baseline,
+      accuracy flat-to-slightly-down (0.701 → 0.691 at w=15/31). Reason, quantified: the prototypes'
+      day-to-day wiggle is 0.155 with a daily SEM of 0.070, but the seasonal swing is **5.61** — the
+      decision is driven entirely by that seasonal level, which a low-pass filter leaves untouched.
+      The *smearing* that matters is different: onsets/durations jitter across bats, so averaging
+      misaligns the shape — smoothing makes that worse, not better. Fix there = align-then-average
+      or a parametric template, not smoothing.
 - [ ] **Remaining model error is amplitude, not shape.** Ranking by *normalised* cross-correlation
       reaches AUC ~0.76 vs 0.70 for the corrected min-MSE rule. Next lever = a scale-invariant score
       (or per-bat normalisation), not another alignment tweak.
