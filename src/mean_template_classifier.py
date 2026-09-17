@@ -173,7 +173,7 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
     """
 
     def __init__(self, min_overlap: float = 0.0, smooth_window: int = 7,
-                 error: str = "mse") -> None:
+                 error: str = "mae") -> None:
         """
         Parameters
         ----------
@@ -187,7 +187,7 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
             ``1`` disables smoothing. Even widths are bumped to the next odd number so the
             average stays centred; series are zero-padded at the year edges, which is harmless
             because activity there is ~0.
-        error : {"mse", "mae"}, default "mse"
+        error : {"mse", "mae"}, default "mae"
             Error used when comparing a series against a prototype, always averaged over the
             values that cross.
         """
