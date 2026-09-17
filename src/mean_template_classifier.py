@@ -92,6 +92,35 @@ misalignment), so smoothing makes it marginally worse rather than better; the fi
 align-then-average or a parametric template. Smoothing the individual series instead is equally
 flat. Kept as an option, default is off (``1``).
 
+``error`` and the smoothing defaults (2026-09-17, requested by Anuar)
+-------------------------------------------------------------------
+Defaults are now ``smooth_window=7`` (applied to both class means in ``fit`` *and* to every
+series in ``predict``) and ``error="mae"``. Measured on the real data, leave-one-out, with the
+sweep as specified:
+
+===============  =====  ======  ========  =======  ======  ======
+configuration    acc    AUC     precision recall   F1      TN/FP/FN/TP
+===============  =====  ======  ========  =======  ======  ======
+smooth 1, mse    0.701  0.700   0.845     0.695    0.762   145/58/139/316
+smooth 7, mse    0.696  0.699   0.844     0.688    0.758   145/58/142/313
+smooth 1, mae    0.669  0.726   0.896     0.589    0.711   172/31/187/268
+smooth 7, mae    0.695  0.733   0.869     0.657    0.748   158/45/156/299
+===============  =====  ======  ========  =======  ======  ======
+
+Reading:
+
+* **Smoothing does not help** (acc -0.005, AUC -0.001): the prototypes' day-to-day wiggle is 0.155
+  against a seasonal swing of 5.61, so a low-pass filter removes a component 36x smaller than the
+  one the decision runs on.
+* **MAE clearly improves the ranking** -- AUC 0.700 -> 0.733 -- but it *degrades the confusion
+  matrix at the default rule*, because "lowest error wins" is threshold 0 and MAE changes the scale
+  of the margin. It buys precision (0.845 -> 0.869) at the cost of recall (0.695 -> 0.657): 13 more
+  false negatives, 13 fewer false alarms.
+* Because the scores rank better, a **tuned threshold** would beat all three. Oracle bound on the
+  same leave-one-out margins: ``smooth 7, mae`` reaches acc 0.710 (TN/FP/FN/TP 128/75/116/339) versus
+  0.707 (134/69/124/331) for ``smooth 1, mse``. So MAE's gain is real but is currently stranded by
+  the fixed decision rule -- the threshold should become a parameter.
+
 Measured, synthetic sandbox (``data/processed/dummy_data.csv``, 1000 x 180)
 --------------------------------------------------------------------------
 ===============  ======  ========  =======  ======  ======
@@ -143,7 +172,8 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
     n_features_in_ : int
     """
 
-    def __init__(self, min_overlap: float = 0.0, smooth_window: int = 1) -> None:
+    def __init__(self, min_overlap: float = 0.0, smooth_window: int = 7,
+                 error: str = "mse") -> None:
         """
         Parameters
         ----------
@@ -151,14 +181,19 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
             Minimum fraction of the series' data that must overlap the prototype's data for an
             offset to be admissible: ``|offset| <= (1 - min_overlap) * n``. ``0.0`` is the full
             sweep, ``1.0`` disables it (full alignment only).
-        smooth_window : int, default 1
-            Window width (days) of a simple centred rolling average applied to **the mean time
-            series of both labels** before the sweep. ``1`` means no smoothing. Even widths are
-            bumped to the next odd number so the average stays centred. The prototypes are
-            zero-padded at the year edges, which is harmless because activity there is ~0.
+        smooth_window : int, default 7
+            Width in days of a simple centred rolling average applied (a) to the class-mean
+            series of both labels in ``fit`` and (b) to every series handed to ``predict``.
+            ``1`` disables smoothing. Even widths are bumped to the next odd number so the
+            average stays centred; series are zero-padded at the year edges, which is harmless
+            because activity there is ~0.
+        error : {"mse", "mae"}, default "mse"
+            Error used when comparing a series against a prototype, always averaged over the
+            values that cross.
         """
         self.min_overlap = min_overlap
         self.smooth_window = smooth_window
+        self.error = error
 
     # ------------------------------------------------------------------ fit
     def fit(self, X, y):
@@ -175,6 +210,8 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
             raise ValueError(f"min_overlap must be in [0, 1], got {self.min_overlap}")
         if int(self.smooth_window) < 1:
             raise ValueError(f"smooth_window must be >= 1, got {self.smooth_window}")
+        if self.error not in ("mse", "mae"):
+            raise ValueError(f"error must be 'mse' or 'mae', got {self.error!r}")
 
         self.n_features_in_ = X.shape[1]
         self.classes_ = np.array([0, 1])
@@ -218,14 +255,17 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
         lo, hi = self._shift_bounds()
         return np.arange(lo, hi + 1)
 
-    def _mse_curves(self, x):
-        """MSE over the crossing region of the two padded series, one value per offset.
+    def _error_curves(self, x):
+        """Error over the crossing region of the two padded series, one value per offset.
 
-        At offset ``o`` the crossing covers the indices ``i`` with ``0 <= i < 3n`` and
-        ``0 <= i - o < 3n``; the score is the mean squared difference over that region, so
-        it is ``3n - |o|`` wide and always contains real data from at least one side.
+        The series is first smoothed with the same centred rolling average used on the
+        prototypes. At offset ``o`` the crossing covers the indices ``i`` with ``0 <= i < 3n``
+        and ``0 <= i - o < 3n``; the score is the mean of ``|x - p|`` (``error="mae"``) or of
+        ``(x - p)^2`` (``error="mse"``) over that region, so it is ``3n - |o|`` wide and always
+        contains real data from at least one side.
         """
         n = self.n_features_in_
+        x = self._smooth(x)
         xp = np.concatenate([np.zeros(n), x, np.zeros(n)])
         offsets = self._offsets()
         mse0 = np.empty(len(offsets))
@@ -233,9 +273,18 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
         for k, o in enumerate(offsets):
             a = max(0, o)
             b = min(3 * n, 3 * n + o)
-            mse0[k] = ((xp[a:b] - self._pad0_[a - o:b - o]) ** 2).mean()
-            mse1[k] = ((xp[a:b] - self._pad1_[a - o:b - o]) ** 2).mean()
+            d0 = xp[a:b] - self._pad0_[a - o:b - o]
+            d1 = xp[a:b] - self._pad1_[a - o:b - o]
+            if self.error == "mae":
+                mse0[k] = np.abs(d0).mean()
+                mse1[k] = np.abs(d1).mean()
+            else:
+                mse0[k] = (d0 ** 2).mean()
+                mse1[k] = (d1 ** 2).mean()
         return mse0, mse1
+
+    # kept for backwards compatibility with earlier notebooks / scripts
+    _mse_curves = _error_curves
 
     # ------------------------------------------------------------- predict
     def predict(self, X, onset=False):
@@ -264,7 +313,7 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
         labels = np.zeros(len(X), dtype=int)
         onsets = np.full(len(X), np.nan)
         for k, x in enumerate(X):
-            mse0, mse1 = self._mse_curves(x)
+            mse0, mse1 = self._error_curves(x)
             if mse1.min() < mse0.min():
                 labels[k] = 1
                 if onset:
@@ -283,6 +332,6 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
         X = np.asarray(X, dtype=float)
         out = np.empty(len(X))
         for k, x in enumerate(X):
-            mse0, mse1 = self._mse_curves(x)
+            mse0, mse1 = self._error_curves(x)
             out[k] = mse0.min() - mse1.min()
         return out
