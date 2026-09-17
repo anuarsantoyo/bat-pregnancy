@@ -37,18 +37,17 @@ _Updated 2026-09-13_
       the label table assigns each individual **one colony for life** (0 of 233 `ID4`s move).
 
 ## Done (2026-09-17) — real-data test of the model
-- [x] **03** `notebooks/03-loocv-mean-template.ipynb` — first real-data test. **FAILS**: LOOCV acc 0.310,
-      precision 1.000, recall 0.002, F1 0.004, score AUC 0.314 (inverted), below the 0.691 majority
-      baseline. Leave-one-row-out and leave-one-bat-out are bit-identical (no CV effect).
-      Cause: the zero padding lets the window sit **entirely in the padding**, scoring the constant
-      `mean(P²)` — 0.599 (P0) vs 1.782 (P1) — so the decision collapses to comparing two numbers.
-      479/658 bats take that escape; 372 of them are truly lactating.
-- [x] **04** `notebooks/04-min-overlap-repair.ipynb` + **`min_overlap` param** added to
-      `src/mean_template_classifier.py` (default **1.0** = no sweep; `0.0` = original, bit-identical).
-      **REPAIRED**: LOOCV acc **0.708** (vs 0.691 majority), precision 0.873, recall 0.677, F1 0.762,
-      AUC 0.711. Leave-one-bat-out 0.710/0.764 → no leakage effect. Sandbox also improves 0.893 → 0.992.
-      **Caveat: onset localisation needs a sweep** — `min_overlap=1.0` returns a constant onset;
-      use ~0.75 for the onset of bats called lactating.
+- [x] **05** `notebooks/05-corrected-sweep.ipynb` + **sweep implemented as specified** — the real fix.
+      Pad both series, sweep the 2n+1 offsets, MSE over the **crossing region**. Real LOOCV
+      **0.310 → 0.701** (P 0.845, R 0.695, F1 0.762, AUC 0.700), sandbox **0.893 → 0.999**, and
+      onset localisation restored (374 onsets, 39 distinct days, day 160–205). `min_overlap` kept
+      as an optional restriction, default 0.0 = full sweep. Notebooks 03/04 bannered as historical.
+- [x] **03** `notebooks/03-loocv-mean-template.ipynb` (**historical record**) — the failure and its
+      diagnosis against the misimplemented sweep: LOOCV acc 0.310, precision 1.000, recall 0.002,
+      F1 0.004, below the 0.691 majority baseline; 479/658 bats scored by a constant.
+- [x] **04** `notebooks/04-min-overlap-repair.ipynb` (**historical record**) — the interim
+      `min_overlap` workaround, which reached 0.708 by forbidding the bad alignments instead of
+      fixing the sweep.
 
 ## Next (post-dataset)
 
@@ -58,10 +57,12 @@ _Updated 2026-09-13_
 - [ ] Decide sit threshold (10s vs 600s) as *the* representation — EDA 02 says **300–600s**
       (best group separation, least chatter); 10s adds ~68 % more events that are pure variance.
 - [ ] **Remaining model error is amplitude, not shape.** Ranking by *normalised* cross-correlation
-      reaches AUC ~0.76 vs 0.711 for the repaired min-MSE rule. Next lever = a scale-invariant score
+      reaches AUC ~0.76 vs 0.70 for the corrected min-MSE rule. Next lever = a scale-invariant score
       (or per-bat normalisation), not another alignment tweak.
 - [ ] F1 0.762 is still under the "always lactating" F1 of 0.818 — the gain is in accuracy/precision/AUC.
-- [ ] Onset estimation: needs its own `min_overlap` (~0.75) — see notebook 04.
+      Recall 0.695 means ~139 lactating bat-years are still missed; look at what they have in common.
+- [ ] The sweep is neutral on the real data (winning offset is a median 8 days from full alignment):
+      worth asking whether the real series should be trimmed to the Apr–Sep window before modelling.
 
 ## Blocked on the real dataset (expected ~2026-09-15)
 > Nothing below should be decided on the synthetic sandbox — the dummy data is
