@@ -1,87 +1,92 @@
 """MeanTemplateClassifier -- shift-invariant nearest-prototype classifier.
 
-Design (Anuar, 2026-09-13), kept as specified
----------------------------------------------
+Design (Anuar, 2026-09-13; sweep formulation corrected 2026-09-17)
+------------------------------------------------------------------
 * ``fit(X, y)`` does no learning: it computes two prototypes, the element-wise
   average of the rows of class 0 and of class 1 (``mean_0_``, ``mean_1_``).
   ("internally creates 2 datasets which are simply the average of the 1s and 0s")
-* ``predict(X)`` zero-pads each series with ``n_features`` zeros on both sides and
-  slides a fixed-length window over it (the "convolution" step). At every shift it
-  computes the MSE against both prototypes over the whole window. The denominator is
-  always ``n_features``, so partial overlaps automatically score worse: at zero overlap
-  the MSE equals the mean of the squared prototype.
-* The label is the prototype with the **lowest minimum MSE** over the allowed shifts.
+* ``predict(X)`` pads **both** the series and the prototype with ``n_features`` zeros on
+  each side, so each becomes ``pad | data | pad`` -- ``l1 l2 l3`` and ``r1 r2 r3`` -- and
+  sweeps one against the other over the ``2n + 1`` relative offsets ``o``:
 
-Why ``min_overlap`` exists (added 2026-09-17, real data)
---------------------------------------------------------
-The original "no minimum-overlap hyper-parameter, no edge flukes" reasoning assumed that
-zero overlap is the *worst* achievable score, so it would never be selected. That is only
-true while every genuine alignment scores above the constant ``mean(P^2)``. On the real
-data the series are empty for ~7 months and individual amplitude spans an order of
-magnitude, so a real alignment often scores *worse* than the constant, and the zero-overlap
-("all padding") window becomes the **argmin**. Its score depends only on the prototype, and
-``mean(P0^2) < mean(P1^2)``, so the model then answers "not lactating" for that bat
-regardless of its data. Measured: 479/658 bats fell back to it, accuracy 0.310.
+      start   o = +n :  r1 on l2, r2 on l3   (l1 and r3 stick out)
+      ...
+      o = 0         :  full alignment (l1 on r1, l2 on r2, l3 on r3)
+      ...
+      end     o = -n :  r2 on l1, r3 on l2
 
-There is a mirror-image failure if the overlap denominator is used instead of the fixed
-``n_features``: the minimum is then driven to the *smallest* overlap (1 day), which also
-scores ~0 for both prototypes. Any "min over shifts" rule needs the alignment range pinned
-down; that is what ``min_overlap`` does.
+  At each offset the MSE is taken **over the values that cross**, i.e. over the
+  overlapping region of the two padded series, which spans ``3n - |o|`` elements.
+  The denominator is that crossing width.
+* The label is the prototype with the **lowest minimum MSE** over the offsets.
+* ``predict(X, onset=True)`` additionally returns the day at which the elevated phase
+  starts, for the series predicted pregnant.
+* ``min_overlap`` optionally restricts the sweep (see below); default ``0.0`` = all offsets.
 
-``min_overlap`` is the minimum fraction of the prototype that must overlap the series for
-a shift to be admissible.
+Why the crossing region matters
+-------------------------------
+Because the crossing is taken over the two padded series, **real data is always in the
+score**: at the end offsets the comparison is one series' data against the other's padding,
+so a series can never be scored without itself being involved. On the real data the winning
+offset is a median of 8 days from full alignment, the maximum is 68, and no bat ever selects
+an end offset.
 
-* ``min_overlap=1.0`` (default) -- only the fully-overlapping alignment; the sweep is off.
-  This is the right setting when every series spans the same fixed calendar window (real
-  data), where there is nothing to align and sliding only creates ways to cheat.
-* ``min_overlap=0.5`` -- allow shifts up to half the series length.
-* ``min_overlap=0.0`` -- no restriction: all ``2*n_features + 1`` shifts, i.e. the original
-  behaviour, kept for the synthetic sandbox where the elevated phase can start anywhere.
+The first implementation did *not* do this. It padded only the series and slid a **fixed
+length-``n`` window** over it, comparing the whole prototype against that window. At the end
+offsets such a window is pure padding, so the score became prototype-vs-zeros = ``mean(P^2)``
+-- a constant containing none of the bat. With ``mean(P0^2) = 0.599`` and
+``mean(P1^2) = 1.782``, 479 of 658 real bats picked that window on prototype 0 and the
+decision degenerated to comparing two constants: accuracy 0.310, every bat called
+"not lactating".
 
-Measured on the real data (leave-one-out, 658 bat-years, sit 300 s):
+``min_overlap`` (optional restriction, default 0.0)
+---------------------------------------------------
+Minimum fraction of the series' data that must overlap the prototype's data for an offset to
+be admissible: ``|offset| <= (1 - min_overlap) * n``.
+
+* ``min_overlap=0.0`` (default) -- all ``2n + 1`` offsets: the intended sweep.
+* ``min_overlap=1.0`` -- only full alignment, sweep disabled.
+
+Measured, real data (658 bat-years, sit 300 s), leave-one-out, corrected sweep:
 
 ===============  ======  ========  =======  ======  ======
 min_overlap      acc     precision recall   F1      AUC
 ===============  ======  ========  =======  ======  ======
-1.0 (default)    0.708   0.873     0.677    0.762   0.711
-0.9              0.698   0.842     0.692    0.760   0.700
-0.5              0.532   0.873     0.378    0.528   0.554
-0.0 (original)   0.310   1.000     0.002    0.004   0.349
+0.0 (default)    0.701   0.845     0.695    0.762   0.700
+1.0              0.708   0.873     0.677    0.762   0.711
+0.0, first impl. 0.310   1.000     0.002    0.004   0.349
 ===============  ======  ========  =======  ======  ======
 
 Majority baseline (always lactating): acc 0.691, precision 0.691, recall 1.000, F1 0.818.
-Leave-one-*bat*-out at ``min_overlap=1.0`` gives 0.710 / 0.873 / 0.679 / 0.764 / 0.711 --
-indistinguishable, so bat-identity leakage is not a factor.
+Leave-one-*bat*-out at ``min_overlap=0.0`` gives 0.701 / 0.845 / 0.695 / 0.762 / 0.700 --
+identical to leave-one-row-out, so bat-identity leakage is not a factor.
+Onset output: 374 onsets returned, 39 distinct values spanning day 160-205 (early June to
+late July), so the sweep still localises the jump.
 
-The same fix also helps the synthetic sandbox (leave-one-out: 0.893 -> **0.992**), i.e. the
-unrestricted sweep was never carrying signal, only escape hatches. **But onset localisation
-needs the sweep**: with a single admissible shift the returned onset is the same constant for
-every series (``nunique == 1``). Use ``min_overlap=1.0`` for the decision and, if the onset is
-wanted, a restricted sweep (e.g. ``min_overlap=0.75``) for the series called lactating.
-* ``predict(X, onset=True)`` additionally returns the day at which the elevated phase
-  starts, for the series predicted pregnant (``nan`` for the others).
+Measured, synthetic sandbox (``data/processed/dummy_data.csv``, 1000 x 180)
+--------------------------------------------------------------------------
+===============  ======  ========  =======  ======  ======
+min_overlap      acc     precision recall   F1      AUC
+===============  ======  ========  =======  ======  ======
+0.0 (default)    0.999   1.000     0.998    0.999   1.000
+1.0              0.992   1.000     0.984    0.992   1.000
+0.0, first impl. 0.893   1.000     0.786    0.880   0.999
+===============  ======  ========  =======  ======  ======
 
-Measured on the synthetic sandbox (``data/processed/dummy_data.csv``)
---------------------------------------------------------------------
-* ``min_overlap=0.0`` (original sweep): accuracy **0.893** -- all 107 errors are
-  pregnant -> non-pregnant, zero false alarms
-* ``min_overlap=1.0`` (new default): accuracy **0.992** -- so on the sandbox too, the
-  unrestricted sweep was losing ~10 points. This is also the setting that reproduces the
-  projection rule's performance (acc 0.996, AUC 1.000).
-* jump-start recovery (needs a sweep): median error +0 to +1 day, IQR +-1-2 days, 99% within +-7 days
-* why the errors at ``min_overlap=0.0``: for a truly pregnant bat the winning margin is only
-  **0.25 MSE** (2.82 vs 3.07) because 145 of the 180 days are identical under both prototypes.
+The sweep is worth ~7 points on the sandbox (where the elevated phase can start anywhere)
+and is neutral on the real data (where every series shares the same calendar window). Under
+the corrected formulation it helps in both; under the first implementation it hurt in both.
 
-Deferred to the real dataset (see ``TODO.md``): the equivalent but better-behaved
-decision via the projection onto ``mean_1_ - mean_0_`` (AUC 1.000 on the sandbox).
+Deferred to the real dataset (see ``TODO.md``): the equivalent but better-behaved decision via
+the projection onto ``mean_1_ - mean_0_``, and a scale-invariant score -- the residual error on
+the real data is amplitude-driven (normalised cross-correlation reaches AUC ~0.76 vs 0.70).
 
-Caveat: ``predict(X, onset=True)`` returns a tuple, so it breaks the usual sklearn
-estimator contract (``score``/``cross_val_score`` need the plain-label form).
+Caveat: ``predict(X, onset=True)`` returns a tuple, so it breaks the usual sklearn estimator
+contract (``score``/``cross_val_score`` need the plain-label form).
 """
 from __future__ import annotations
 
 import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
 from sklearn.base import BaseEstimator, ClassifierMixin
 
 __all__ = ["MeanTemplateClassifier"]
@@ -92,32 +97,23 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
 
     Parameters
     ----------
-    min_overlap : float in [0, 1], default 1.0
-        Minimum fraction of the prototype that must overlap the series for a shift to be
-        admissible. ``1.0`` disables the sweep, ``0.0`` is the original unrestricted sweep.
-        See the module docstring for why this exists.
+    min_overlap : float in [0, 1], default 0.0
+        Minimum fraction of the series' data that must overlap the prototype's data for an
+        offset to be admissible: ``|offset| <= (1 - min_overlap) * n``. ``0.0`` is the full
+        sweep, ``1.0`` disables it (full alignment only).
 
     Attributes
     ----------
     classes_ : ndarray of shape (2,)
     mean_0_, mean_1_ : ndarray of shape (n_features,) -- the two class prototypes.
     diff_template_ : ndarray -- ``mean_1_ - mean_0_`` (kept for inspection/plots).
-    onset_anchor_ : int -- index inside the prototypes where the elevated phase is
-        taken to start (50% of the rise of ``diff_template_``). Used to turn the
-        best-matching shift into a day number.
+    onset_anchor_ : int -- index inside the prototypes where the elevated phase is taken to
+        start (50% of the rise of ``diff_template_``). The onset day of a series is
+        ``onset_anchor_ + winning_offset + 1``.
     n_features_in_ : int
     """
 
-    def __init__(self, min_overlap: float = 1.0) -> None:
-        """
-        Parameters
-        ----------
-        min_overlap : float in [0, 1], default 1.0
-            Minimum fraction of the prototype that must overlap the series for a shift to
-            be admissible. ``1.0`` disables the sweep (fully-overlapping alignment only,
-            the right choice for calendar-aligned year series); ``0.0`` restores the
-            original unrestricted sweep needed by the synthetic sandbox.
-        """
+    def __init__(self, min_overlap: float = 0.0) -> None:
         self.min_overlap = min_overlap
 
     # ------------------------------------------------------------------ fit
@@ -131,7 +127,6 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
         uniq = np.unique(y)
         if not np.array_equal(uniq, [0, 1]):
             raise ValueError(f"y must be binary 0/1, got classes {uniq}")
-
         if not 0.0 <= float(self.min_overlap) <= 1.0:
             raise ValueError(f"min_overlap must be in [0, 1], got {self.min_overlap}")
 
@@ -141,33 +136,49 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
         self.mean_1_ = X[y == 1].mean(axis=0)
         self.diff_template_ = self.mean_1_ - self.mean_0_
 
-        # where the elevated phase starts inside the prototype (robust to the
-        # smoothing caused by averaging misaligned individuals)
+        # zero-padded prototypes: pad | data | pad
+        n = self.n_features_in_
+        self._pad0_ = np.concatenate([np.zeros(n), self.mean_0_, np.zeros(n)])
+        self._pad1_ = np.concatenate([np.zeros(n), self.mean_1_, np.zeros(n)])
+
+        # where the elevated phase starts inside the prototype (robust to the smoothing
+        # caused by averaging misaligned individuals)
         half = 0.5 * self.diff_template_.max()
         self.onset_anchor_ = int(np.argmax(self.diff_template_ >= half))
         return self
 
     # ------------------------------------------------------------- helpers
     def _shift_bounds(self):
-        """Inclusive range of window positions allowed by ``min_overlap``.
+        """Inclusive range of relative offsets allowed by ``min_overlap``.
 
-        With the series occupying ``[n, 2n)`` of ``padded``, a window at position ``i``
-        overlaps the series in ``n - |i - n|`` elements, so ``min_overlap`` bounds ``|i - n|``.
+        Offset ``o`` places prototype index ``j`` on series index ``j + o``, so ``|o| = n``
+        means the two data segments no longer overlap at all.
         """
         n = self.n_features_in_
         span = int(np.floor((1.0 - float(self.min_overlap)) * n))
-        return n - span, n + span
+        return -span, span
+
+    def _offsets(self):
+        lo, hi = self._shift_bounds()
+        return np.arange(lo, hi + 1)
 
     def _mse_curves(self, x):
-        """MSE of the sliding window against both prototypes, one value per allowed shift."""
+        """MSE over the crossing region of the two padded series, one value per offset.
+
+        At offset ``o`` the crossing covers the indices ``i`` with ``0 <= i < 3n`` and
+        ``0 <= i - o < 3n``; the score is the mean squared difference over that region, so
+        it is ``3n - |o|`` wide and always contains real data from at least one side.
+        """
         n = self.n_features_in_
-        zeros = np.zeros(n)
-        padded = np.concatenate([zeros, x, zeros])
-        windows = sliding_window_view(padded, n)          # (2n + 1, n)
-        lo, hi = self._shift_bounds()
-        windows = windows[lo:hi + 1]                      # drop the inadmissible alignments
-        mse0 = ((windows - self.mean_0_) ** 2).mean(axis=1)
-        mse1 = ((windows - self.mean_1_) ** 2).mean(axis=1)
+        xp = np.concatenate([np.zeros(n), x, np.zeros(n)])
+        offsets = self._offsets()
+        mse0 = np.empty(len(offsets))
+        mse1 = np.empty(len(offsets))
+        for k, o in enumerate(offsets):
+            a = max(0, o)
+            b = min(3 * n, 3 * n + o)
+            mse0[k] = ((xp[a:b] - self._pad0_[a - o:b - o]) ** 2).mean()
+            mse1[k] = ((xp[a:b] - self._pad1_[a - o:b - o]) ** 2).mean()
         return mse0, mse1
 
     # ------------------------------------------------------------- predict
@@ -193,8 +204,7 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
         if X.shape[1] != self.n_features_in_:
             raise ValueError(f"X has {X.shape[1]} columns, model trained on {self.n_features_in_}")
 
-        n = self.n_features_in_
-        lo, hi = self._shift_bounds()
+        offsets = self._offsets()
         labels = np.zeros(len(X), dtype=int)
         onsets = np.full(len(X), np.nan)
         for k, x in enumerate(X):
@@ -202,10 +212,8 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
             if mse1.min() < mse0.min():
                 labels[k] = 1
                 if onset:
-                    shift = lo + int(mse1.argmin())
-                    # window element i maps to series index shift + i - n
-                    # -> 1-based day number of the anchor day
-                    onsets[k] = shift + self.onset_anchor_ - n + 1
+                    o = offsets[int(mse1.argmin())]
+                    onsets[k] = self.onset_anchor_ + o + 1
         if onset:
             return labels, onsets
         return labels
@@ -214,8 +222,7 @@ class MeanTemplateClassifier(ClassifierMixin, BaseEstimator):
     def decision_margins(self, X):
         """min-MSE(mean_0) - min-MSE(mean_1) per sample. Positive -> predicted 1.
 
-        Handy to see *how close* a call was: on the sandbox the true-pregnant samples
-        sit around +0.25 and the true non-pregnant around -1.2.
+        Handy to see *how close* a call was.
         """
         X = np.asarray(X, dtype=float)
         out = np.empty(len(X))
